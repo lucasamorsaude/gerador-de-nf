@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Gerador de Recibos em Lote</title>
+  <!-- Bibliotecas externas -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: #f4f7f6; padding: 30px 20px; display: flex; justify-content: center; }
+    .card { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 650px; }
+    h2 { color: #1B3A6B; margin-top: 0; text-align: center; }
+    .form-group { margin-bottom: 15px; }
+    label { font-weight: 600; font-size: 0.9em; color: #333; display: block; margin-bottom: 5px; }
+    input[type="text"], input[type="file"], textarea {
+      width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95em;
+    }
+    textarea { height: 120px; resize: vertical; font-family: monospace; }
+    .divider { text-align: center; font-weight: bold; color: #888; margin: 15px 0; display: flex; align-items: center; }
+    .divider::before, .divider::after { content: ''; flex: 1; border-bottom: 1px solid #ddd; margin: 0 10px; }
+    button {
+      width: 100%; padding: 14px; background-color: #1B3A6B; color: white; border: none;
+      border-radius: 6px; font-size: 1em; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s;
+    }
+    button:hover { background-color: #2E5FA3; }
+    #status { margin-top: 15px; text-align: center; font-weight: 600; color: #1B3A6B; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Gerador de Recibos em Lote</h2>
+  
+  <div class="form-group">
+    <label>Cole a lista (Nome e Valor separados por TAB ou Espaço Duplo):</label>
+    <textarea id="textoCopiado" placeholder="Ana Paula De Carvalho Santos	R$ 1.650,00&#10;Caroline Borges	R$ 494,00"></textarea>
+  </div>
+
+  <div class="divider">OU</div>
+
+  <div class="form-group">
+    <label>Selecione uma Planilha Excel (.xlsx):</label>
+    <input type="file" id="excelFile" accept=".xlsx, .xls">
+  </div>
+
+  <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+
+  <div class="form-group">
+    <label>Pagador:</label>
+    <input type="text" id="pagador" value="AmorSaude Sao Joao del Rei">
+  </div>
+
+  <div class="form-group">
+    <label>Referência:</label>
+    <input type="text" id="referencia" value="Repasse de Profissional">
+  </div>
+
+  <div class="form-group">
+    <label>Data:</label>
+    <input type="text" id="dataRecibo" value="27/07/2026">
+  </div>
+
+  <button onclick="processarDados()">Gerar e Baixar Recibos (ZIP)</button>
+  <div id="status"></div>
+</div>
+
+<script>
+  const { jsPDF } = window.jspdf;
+
+  async function processarDados() {
+    const status = document.getElementById('status');
+    const textoCopiado = document.getElementById('textoCopiado').value.trim();
+    const fileInput = document.getElementById('excelFile');
+    
+    const pagador = document.getElementById('pagador').value;
+    const referencia = document.getElementById('referencia').value;
+    const dataRecibo = document.getElementById('dataRecibo').value;
+
+    let listaProfissionais = [];
+
+    // 1. Processar por Texto Copiado (se preenchido)
+    if (textoCopiado) {
+      status.innerText = "Lendo texto copiado...";
+      const linhas = textoCopiado.split('\n');
+      
+      linhas.forEach(linha => {
+        if (!linha.trim()) return;
+        
+        // Separa por TAB (\t) ou múltiplos espaços
+        let partes = linha.split('\t');
+        if (partes.length < 2) {
+          // Tenta separar pelo último aparecimento de "R$"
+          const posRS = linha.lastIndexOf("R$");
+          if (posRS !== -1) {
+            partes = [linha.substring(0, posRS).trim(), linha.substring(posRS).trim()];
+          }
+        }
+
+        if (partes.length >= 2) {
+          const nome = partes[0].trim();
+          const valor = partes[1].trim();
+          if (nome && valor) {
+            listaProfissionais.push({ nome, valor });
+          }
+        }
+      });
+    } 
+    // 2. Processar por Arquivo Excel (caso o texto esteja vazio)
+    else if (fileInput.files.length) {
+      status.innerText = "Lendo arquivo Excel...";
+      const file = fileInput.files[0];
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet);
+
+      rows.forEach(row => {
+        const nome = row["Profissional"] || row["Nome"] || row["PROFISSIONAL"] || Object.values(row)[0];
+        let valor = row["Valor"] || row["VALOR"] || Object.values(row)[1];
+
+        if (typeof valor === 'number') {
+          valor = valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+
+        if (nome && valor) {
+          listaProfissionais.push({ nome: String(nome).trim(), valor: String(valor).trim() });
+        }
+      });
+    } else {
+      alert('Cole a lista no campo de texto OU selecione uma planilha Excel!');
+      return;
+    }
+
+    if (!listaProfissionais.length) {
+      alert('Não foi possível extrair dados! Verifique o formato inserido.');
+      status.innerText = "";
+      return;
+    }
+
+    // 3. Gerar PDFs e Compactar em ZIP
+    status.innerText = `Gerando ${listaProfissionais.length} recibos...`;
+    const zip = new JSZip();
+
+    listaProfissionais.forEach((item, index) => {
+      const pdfDoc = criarPDF(item.nome, item.valor, index + 1, pagador, referencia, dataRecibo);
+      const pdfBlob = pdfDoc.output('blob');
+      
+      const nomeSanitizado = item.nome.replace(/[^a-zA-Z0-9]/g, "_");
+      const numFormatted = String(index + 1).padStart(2, '0');
+      zip.file(`Recibo_${numFormatted}_${nomeSanitizado}.pdf`, pdfBlob);
+    });
+
+    status.innerText = "Compactando arquivo ZIP...";
+    const zipContent = await zip.generateAsync({ type: "blob" });
+
+    // Download do ZIP
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(zipContent);
+    link.download = `Recibos_${pagador.replace(/[^a-zA-Z0-9]/g, "_")}.zip`;
+    link.click();
+
+    status.innerText = "✅ Recibos gerados com sucesso!";
+  }
+
+  function criarPDF(nome, valor, numero, pagador, referencia, data) {
+    const doc = new jsPDF({ unit: "cm", format: "a4" });
+    const W = 21.0;
+    const H = 29.7;
+
+    // Fundo Topo
+    doc.setFillColor("#1B3A6B");
+    doc.rect(0, 0, W, 3.8, "F");
+
+    // Título Topo
+    doc.setTextColor("#FFFFFF");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20);
+    doc.text("RECIBO DE PAGAMENTO", W / 2, 1.7, { align: "center" });
+
+    // Subtítulo e Número
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor("#A8C4E8");
+    doc.text(pagador, W / 2, 2.5, { align: "center" });
+
+    doc.setFontSize(9);
+    doc.setTextColor("#7AAAD4");
+    doc.text(`N° ${String(numero).padStart(4, '0')}`, W - 1.5, 3.3, { align: "right" });
+
+    // Caixa Valor
+    doc.setFillColor("#2E5FA3");
+    doc.roundedRect(1.5, 4.8, W - 3, 1.7, 0.3, 0.3, "F");
+
+    doc.setTextColor("#FFFFFF");
+    doc.setFontSize(10);
+    doc.text("VALOR", W / 2, 5.3, { align: "center" });
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text(String(valor), W / 2, 6.1, { align: "center" });
+
+    // Função de desenhar campos
+    function desenharCampo(label, val, y, highlight) {
+      if (highlight) {
+        doc.setFillColor("#F0F4FB");
+        doc.roundedRect(1.5, y - 0.2, W - 3, 1.1, 0.2, 0.2, "F");
+      }
+      doc.setTextColor("#2E5FA3");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text(label.toUpperCase(), 2.0, y + 0.25);
+
+      doc.setTextColor("#1A1A1A");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(String(val), 2.0, y + 0.7);
+
+      doc.setDrawColor("#D0D8E8");
+      doc.setLineWidth(0.02);
+      doc.line(1.5, y + 0.9, W - 1.5, y + 0.9);
+    }
+
+    desenharCampo("Beneficiario", nome, 7.5, true);
+    desenharCampo("Referencia", referencia, 8.8, false);
+    desenharCampo("Data", data, 10.1, true);
+    desenharCampo("Pagador", pagador, 11.4, false);
+
+    // Declaração
+    doc.setFillColor("#F0F4FB");
+    doc.roundedRect(1.5, 13.5, W - 3, 1.8, 0.2, 0.2, "F");
+
+    doc.setTextColor("#444444");
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(9.5);
+    const decl = `Declaro ter recebido de ${pagador} a quantia de ${valor}, referente a ${referencia}, em ${data}.`;
+    const lines = doc.splitTextToSize(decl, W - 4);
+    doc.text(lines, W / 2, 14.3, { align: "center" });
+
+    // Assinatura
+    const sigY = 18.5;
+    doc.setDrawColor("#2E5FA3");
+    doc.setLineWidth(0.03);
+    doc.line(W / 2 - 4, sigY, W / 2 + 4, sigY);
+
+    doc.setTextColor("#1A1A1A");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(nome, W / 2, sigY + 0.5, { align: "center" });
+
+    doc.setFontSize(8.5);
+    doc.setTextColor("#666666");
+    doc.text("Assinatura do Beneficiario", W / 2, sigY + 0.9, { align: "center" });
+
+    // Rodapé
+    doc.setFillColor("#1B3A6B");
+    doc.rect(0, H - 1.2, W, 1.2, "F");
+
+    doc.setTextColor("#7AAAD4");
+    doc.setFontSize(8);
+    doc.text(`${pagador}  ·  Recibo emitido em ${data}  ·  Ref: ${referencia}`, W / 2, H - 0.5, { align: "center" });
+
+    return doc;
+  }
+</script>
+
+</body>
+</html>
