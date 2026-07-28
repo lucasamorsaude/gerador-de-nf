@@ -27,6 +27,26 @@
     }
     button:hover { background-color: #2E5FA3; }
     #status { margin-top: 15px; text-align: center; font-weight: 600; color: #1B3A6B; }
+
+    /* Resultados */
+    #resultado { margin-top: 25px; display: none; }
+    #resultado h3 { color: #1B3A6B; font-size: 1.05em; margin: 0 0 12px; }
+    .acoes-lote { display: flex; gap: 10px; }
+    .acoes-lote button { margin-top: 0; }
+    button.secundario { background-color: #fff; color: #1B3A6B; border: 1px solid #2E5FA3; }
+    button.secundario:hover { background-color: #F0F4FB; }
+    .lista-recibos { list-style: none; padding: 0; margin: 15px 0 0; max-height: 320px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; }
+    .lista-recibos li {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #f0f0f0;
+    }
+    .lista-recibos li:last-child { border-bottom: none; }
+    .lista-recibos .num { font-size: 0.8em; font-weight: 700; color: #7AAAD4; min-width: 32px; }
+    .lista-recibos .info { flex: 1; min-width: 0; }
+    .lista-recibos .nome { font-size: 0.9em; color: #1A1A1A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lista-recibos .valor { font-size: 0.8em; color: #2E5FA3; font-weight: 600; }
+    .lista-recibos button {
+      width: auto; margin: 0; padding: 7px 14px; font-size: 0.8em; white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -63,12 +83,25 @@
     <input type="text" id="dataRecibo" value="27/07/2026">
   </div>
 
-  <button onclick="processarDados()">Gerar e Baixar Recibos (ZIP)</button>
+  <button onclick="processarDados()">Gerar Recibos</button>
   <div id="status"></div>
+
+  <div id="resultado">
+    <h3 id="resumo"></h3>
+    <div class="acoes-lote">
+      <button onclick="baixarZip()">Baixar Todos (ZIP)</button>
+      <button class="secundario" onclick="baixarTodosPdfs()">Baixar Todos (PDFs)</button>
+    </div>
+    <ul id="listaRecibos" class="lista-recibos"></ul>
+  </div>
 </div>
 
 <script>
   const { jsPDF } = window.jspdf;
+
+  // Recibos gerados na última execução: { nome, valor, numero, arquivo, blob }
+  let recibosGerados = [];
+  let nomeBaseZip = "Recibos";
 
   async function processarDados() {
     const status = document.getElementById('status');
@@ -78,6 +111,11 @@
     const pagador = document.getElementById('pagador').value;
     const referencia = document.getElementById('referencia').value;
     const dataRecibo = document.getElementById('dataRecibo').value;
+
+    // Limpa o resultado anterior
+    recibosGerados = [];
+    document.getElementById('resultado').style.display = 'none';
+    document.getElementById('listaRecibos').innerHTML = "";
 
     let listaProfissionais = [];
 
@@ -141,29 +179,109 @@
       return;
     }
 
-    // 3. Gerar PDFs e Compactar em ZIP
+    // 3. Gerar os PDFs (sem baixar — o usuário escolhe como baixar)
     status.innerText = `Gerando ${listaProfissionais.length} recibos...`;
-    const zip = new JSZip();
 
-    listaProfissionais.forEach((item, index) => {
+    recibosGerados = listaProfissionais.map((item, index) => {
       const pdfDoc = criarPDF(item.nome, item.valor, index + 1, pagador, referencia, dataRecibo);
-      const pdfBlob = pdfDoc.output('blob');
-      
       const nomeSanitizado = item.nome.replace(/[^a-zA-Z0-9]/g, "_");
       const numFormatted = String(index + 1).padStart(2, '0');
-      zip.file(`Recibo_${numFormatted}_${nomeSanitizado}.pdf`, pdfBlob);
+
+      return {
+        nome: item.nome,
+        valor: item.valor,
+        numero: index + 1,
+        arquivo: `Recibo_${numFormatted}_${nomeSanitizado}.pdf`,
+        blob: pdfDoc.output('blob')
+      };
     });
 
-    status.innerText = "Compactando arquivo ZIP...";
-    const zipContent = await zip.generateAsync({ type: "blob" });
+    nomeBaseZip = `Recibos_${pagador.replace(/[^a-zA-Z0-9]/g, "_")}`;
 
-    // Download do ZIP
+    renderizarLista();
+    status.innerText = "✅ Recibos gerados! Escolha abaixo como baixar.";
+  }
+
+  function renderizarLista() {
+    const painel = document.getElementById('resultado');
+    const lista = document.getElementById('listaRecibos');
+    const resumo = document.getElementById('resumo');
+
+    resumo.innerText = `${recibosGerados.length} recibo(s) pronto(s)`;
+    lista.innerHTML = "";
+
+    recibosGerados.forEach((recibo, index) => {
+      const li = document.createElement('li');
+
+      const num = document.createElement('span');
+      num.className = 'num';
+      num.innerText = String(recibo.numero).padStart(2, '0');
+
+      const info = document.createElement('div');
+      info.className = 'info';
+      const nome = document.createElement('div');
+      nome.className = 'nome';
+      nome.innerText = recibo.nome;
+      nome.title = recibo.nome;
+      const valor = document.createElement('div');
+      valor.className = 'valor';
+      valor.innerText = recibo.valor;
+      info.append(nome, valor);
+
+      const btn = document.createElement('button');
+      btn.innerText = 'Baixar PDF';
+      btn.onclick = () => baixarUm(index);
+
+      li.append(num, info, btn);
+      lista.appendChild(li);
+    });
+
+    painel.style.display = 'block';
+  }
+
+  function baixarBlob(blob, nomeArquivo) {
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(zipContent);
-    link.download = `Recibos_${pagador.replace(/[^a-zA-Z0-9]/g, "_")}.zip`;
+    link.href = url;
+    link.download = nomeArquivo;
+    document.body.appendChild(link);
     link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 
-    status.innerText = "✅ Recibos gerados com sucesso!";
+  function baixarUm(index) {
+    const recibo = recibosGerados[index];
+    if (!recibo) return;
+    baixarBlob(recibo.blob, recibo.arquivo);
+  }
+
+  // Baixa os PDFs um a um, com um pequeno intervalo para o navegador não bloquear
+  async function baixarTodosPdfs() {
+    if (!recibosGerados.length) return;
+    const status = document.getElementById('status');
+
+    for (let i = 0; i < recibosGerados.length; i++) {
+      status.innerText = `Baixando PDF ${i + 1} de ${recibosGerados.length}...`;
+      baixarUm(i);
+      await new Promise(r => setTimeout(r, 400));
+    }
+
+    status.innerText = "✅ Todos os PDFs foram baixados!";
+  }
+
+  async function baixarZip() {
+    if (!recibosGerados.length) return;
+    const status = document.getElementById('status');
+
+    status.innerText = "Compactando arquivo ZIP...";
+    const zip = new JSZip();
+    recibosGerados.forEach(recibo => zip.file(recibo.arquivo, recibo.blob));
+
+    const zipContent = await zip.generateAsync({ type: "blob" });
+    baixarBlob(zipContent, `${nomeBaseZip}.zip`);
+
+    status.innerText = "✅ ZIP baixado com sucesso!";
   }
 
   function criarPDF(nome, valor, numero, pagador, referencia, data) {
